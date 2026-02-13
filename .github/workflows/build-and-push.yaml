@@ -1,0 +1,298 @@
+name: Build and Push Images
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., 1.0.10)'
+        required: false
+        default: 'latest'
+      push_images:
+        description: 'Push images to registry'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  IMAGE_TAG_BASE: quay.io/dprince/openshift-lightspeed-operator
+  CONTAINER_TOOL: docker
+
+jobs:
+  build-operator:
+    name: Build Operator Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      operator_image: ${{ steps.meta.outputs.image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            VERSION="latest"
+          else
+            VERSION="pr-${{ github.event.pull_request.number }}"
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "Building version: ${VERSION}"
+
+      - name: Set image metadata
+        id: meta
+        run: |
+          IMAGE="${IMAGE_TAG_BASE}:${{ steps.version.outputs.version }}"
+          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
+          echo "IMG=${IMAGE}" >> $GITHUB_ENV
+
+      - name: Run tests
+        run: make test
+
+      - name: Log in to Red Hat Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.redhat.io
+          username: ${{ secrets.REDHATIO_USERNAME }}
+          password: ${{ secrets.REDHATIO_PASSWORD }}
+
+      - name: Log in to Quay.io
+        if: |
+          github.event_name != 'pull_request' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.push_images == 'true')
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build operator image
+        run: |
+          make docker-build IMG=${{ steps.meta.outputs.image }}
+
+      - name: Push operator image
+        if: |
+          github.event_name != 'pull_request' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.push_images == 'true')
+        run: |
+          make docker-push IMG=${{ steps.meta.outputs.image }}
+
+      - name: Save image for next jobs
+        if: github.event_name == 'pull_request'
+        run: |
+          docker save ${{ steps.meta.outputs.image }} -o /tmp/operator-image.tar
+
+      - name: Upload operator image artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-image
+          path: /tmp/operator-image.tar
+          retention-days: 1
+
+  build-bundle:
+    name: Build Bundle Image
+    runs-on: ubuntu-latest
+    needs: build-operator
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      bundle_image: ${{ steps.meta.outputs.image }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Set bundle metadata
+        id: meta
+        run: |
+          VERSION="${{ needs.build-operator.outputs.version }}"
+          BUNDLE_IMG="${IMAGE_TAG_BASE}-bundle:v${VERSION}"
+          echo "image=${BUNDLE_IMG}" >> $GITHUB_OUTPUT
+          echo "BUNDLE_IMG=${BUNDLE_IMG}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      - name: Download operator image artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: operator-image
+          path: /tmp
+
+      - name: Load operator image
+        if: github.event_name == 'pull_request'
+        run: |
+          docker load -i /tmp/operator-image.tar
+
+      - name: Log in to Red Hat Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.redhat.io
+          username: ${{ secrets.REDHATIO_USERNAME }}
+          password: ${{ secrets.REDHATIO_PASSWORD }}
+
+      - name: Log in to Quay.io
+        if: |
+          github.event_name != 'pull_request' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.push_images == 'true')
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build bundle
+        run: |
+          BUNDLE_TAG="${{ needs.build-operator.outputs.version }}"
+          # Remove 'v' prefix if present for BUNDLE_TAG
+          BUNDLE_TAG="${BUNDLE_TAG#v}"
+          make bundle BUNDLE_TAG="${BUNDLE_TAG}"
+
+      - name: Build bundle image
+        run: |
+          make bundle-build BUNDLE_IMG=${{ steps.meta.outputs.image }}
+
+      - name: Push bundle image
+        if: |
+          github.event_name != 'pull_request' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.push_images == 'true')
+        run: |
+          make bundle-push BUNDLE_IMG=${{ steps.meta.outputs.image }}
+
+      - name: Save bundle image for next job
+        if: github.event_name == 'pull_request'
+        run: |
+          docker save ${{ steps.meta.outputs.image }} -o /tmp/bundle-image.tar
+
+      - name: Upload bundle image artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-image
+          path: /tmp/bundle-image.tar
+          retention-days: 1
+
+  build-catalog:
+    name: Build Catalog Image
+    runs-on: ubuntu-latest
+    needs: build-bundle
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Set catalog metadata
+        id: meta
+        run: |
+          VERSION="${{ needs.build-operator.outputs.version }}"
+          CATALOG_IMG="${IMAGE_TAG_BASE}-catalog:v${VERSION}"
+          echo "image=${CATALOG_IMG}" >> $GITHUB_OUTPUT
+          echo "CATALOG_IMG=${CATALOG_IMG}" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+          echo "BUNDLE_IMG=${{ needs.build-bundle.outputs.bundle_image }}" >> $GITHUB_ENV
+
+      - name: Download bundle image artifact
+        if: github.event_name == 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          name: bundle-image
+          path: /tmp
+
+      - name: Load bundle image
+        if: github.event_name == 'pull_request'
+        run: |
+          docker load -i /tmp/bundle-image.tar
+
+      - name: Log in to Red Hat Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.redhat.io
+          username: ${{ secrets.REDHATIO_USERNAME }}
+          password: ${{ secrets.REDHATIO_PASSWORD }}
+
+      - name: Log in to Quay.io
+        if: |
+          github.event_name != 'pull_request' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.push_images == 'true')
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build catalog image
+        run: |
+          make catalog-build \
+            CATALOG_IMG=${{ steps.meta.outputs.image }} \
+            BUNDLE_IMGS=${{ needs.build-bundle.outputs.bundle_image }}
+
+      - name: Push catalog image
+        if: |
+          github.event_name != 'pull_request' ||
+          (github.event_name == 'workflow_dispatch' && github.event.inputs.push_images == 'true')
+        run: |
+          make catalog-push CATALOG_IMG=${{ steps.meta.outputs.image }}
+
+  summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: [build-operator, build-bundle, build-catalog]
+    if: always()
+
+    steps:
+      - name: Print summary
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.build-operator.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Images Built" >> $GITHUB_STEP_SUMMARY
+          echo "- Operator: \`${{ needs.build-operator.outputs.operator_image }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Bundle: \`${{ needs.build-bundle.outputs.bundle_image }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Catalog: \`${IMAGE_TAG_BASE}-catalog:v${{ needs.build-operator.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "> **Note:** Images were built but not pushed (PR build)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "> Images have been pushed to quay.io" >> $GITHUB_STEP_SUMMARY
+          fi
