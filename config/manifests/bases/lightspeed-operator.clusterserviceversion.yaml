@@ -20,7 +20,7 @@ metadata:
     operators.openshift.io/valid-subscription: '["OpenShift Container Platform", "OpenShift
       Platform Plus", "OpenShift Kubernetes Engine", "OpenShift Virtualization Engine"]'
     repository: https://github.com/openshift/lightspeed-operator
-  name: lightspeed-operator.latest
+  name: lightspeed-operator.v1.0.10
   namespace: openshift-lightspeed
 spec:
   apiservicedefinitions: {}
@@ -655,4 +655,4 @@ spec:
   provider:
     name: Red Hat, Inc
     url: https://github.com/openshift/lightspeed-service
-  version: 0.0.0
+  version: 1.0.10
