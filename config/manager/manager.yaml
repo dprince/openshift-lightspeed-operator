@@ -72,7 +72,7 @@ spec:
         - --secure-metrics-server
         - "--cert-dir=/etc/tls/private"
         - "--lcore-image=quay.io/lightspeed-core/lightspeed-stack:dev-latest"
-        - "--use-lcore=false"
+        - "--use-lcore=true"
         - "--lcore-server=true"
         image: quay.io/openshift-lightspeed/lightspeed-operator:latest
         imagePullPolicy: Always
