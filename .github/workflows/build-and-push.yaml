@@ -239,10 +239,18 @@ jobs:
         run: |
           VERSION="${{ needs.build-operator.outputs.version }}"
           CATALOG_IMG="${IMAGE_TAG_BASE}-catalog:v${VERSION}"
+          BUNDLE_IMAGE="${{ needs.build-bundle.outputs.bundle_image }}"
+
+          # Fallback to constructing bundle image name if output is empty
+          if [ -z "${BUNDLE_IMAGE}" ]; then
+            BUNDLE_IMAGE="${IMAGE_TAG_BASE}-bundle:v${VERSION}"
+            echo "Warning: bundle_image output is empty, using fallback: ${BUNDLE_IMAGE}"
+          fi
+
           echo "image=${CATALOG_IMG}" >> $GITHUB_OUTPUT
           echo "CATALOG_IMG=${CATALOG_IMG}" >> $GITHUB_ENV
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          echo "BUNDLE_IMG=${{ needs.build-bundle.outputs.bundle_image }}" >> $GITHUB_ENV
+          echo "BUNDLE_IMGS=${BUNDLE_IMAGE}" >> $GITHUB_ENV
 
       - name: Download bundle image artifact
         if: github.event_name == 'pull_request'
@@ -273,11 +281,14 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
+      - name: Update catalog index with workflow bundle image
+        run: |
+          echo "Replacing bundle image reference in catalog index.yaml with: ${BUNDLE_IMGS}"
+          sed -i "s|^image: .*|image: ${BUNDLE_IMGS}|" lightspeed-catalog/index.yaml
+
       - name: Build catalog image
         run: |
-          make catalog-build \
-            CATALOG_IMG=${{ steps.meta.outputs.image }} \
-            BUNDLE_IMGS=${{ needs.build-bundle.outputs.bundle_image }}
+          make catalog-build
 
       - name: Push catalog image
         if: |

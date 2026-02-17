@@ -77,7 +77,7 @@ endif
 # By default, it will use podman if available, otherwise falls back to docker.
 # Be aware that the target commands are only tested with Docker.
 # You can override this by setting CONTAINER_TOOL environment variable.
-CONTAINER_TOOL ?= "$(shell which podman >/dev/null 2>&1 && echo podman || echo docker)"
+CONTAINER_TOOL ?= $(shell which podman >/dev/null 2>&1 && echo podman || echo docker)
 
 # Setting SHELL to bash allows bash commands to be executed by recipes.
 # Options are set to exit when a recipe line exits non-zero or a piped command fails.
@@ -454,6 +454,38 @@ else
 JQ = $(shell which jq)
 endif
 endif
+
+# The image tag given to the resulting catalog image (e.g. make catalog-build CATALOG_IMG=example.com/operator-catalog:v0.2.0).
+CATALOG_IMG ?= $(IMAGE_TAG_BASE)-catalog:v$(VERSION)
+
+# CATALOG_DIR defines the FBC directory to use for building the catalog image.
+# Defaults to lightspeed-catalog but can be set to version-specific catalogs (e.g., lightspeed-catalog-4.18).
+# Example: make catalog-build CATALOG_DIR=lightspeed-catalog-4.18
+CATALOG_DIR ?= lightspeed-catalog
+
+# CATALOG_DOCKERFILE defines which Dockerfile to use for building the catalog.
+# Defaults to lightspeed-catalog.Dockerfile but should match CATALOG_DIR.
+# Example: make catalog-build CATALOG_DOCKERFILE=lightspeed-catalog-4.18.Dockerfile
+CATALOG_DOCKERFILE ?= lightspeed-catalog.Dockerfile
+
+# Build a catalog image from an existing file-based catalog (FBC) directory.
+# The catalog directories (lightspeed-catalog*/) contain index.yaml files with bundle metadata.
+# To build version-specific catalogs:
+#   make catalog-build CATALOG_DIR=lightspeed-catalog-4.18 CATALOG_DOCKERFILE=lightspeed-catalog-4.18.Dockerfile
+.PHONY: catalog-build
+catalog-build: ## Build a catalog image from FBC directory.
+	@if [ ! -d "$(CATALOG_DIR)" ]; then \
+		echo "Error: Catalog directory '$(CATALOG_DIR)' does not exist."; \
+		echo "Available catalogs: lightspeed-catalog, lightspeed-catalog-4.16, lightspeed-catalog-4.17, etc."; \
+		exit 1; \
+	fi
+	$(CONTAINER_TOOL) build -f $(CATALOG_DOCKERFILE) -t $(CATALOG_IMG) .
+
+# Push the catalog image.
+.PHONY: catalog-push
+catalog-push: ## Push a catalog image.
+	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
 
 # Genarate release objects for Konflux builds
 .PHONY: konflux-release
