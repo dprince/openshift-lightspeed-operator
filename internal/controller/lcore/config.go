@@ -185,6 +185,15 @@ func buildLlamaStackInferenceProviders(_ reconciler.Reconciler, _ context.Contex
 			if !hasAPIKeyField(configCopy) && provider.CredentialsSecretRef.Name != "" {
 				configCopy["api_key"] = fmt.Sprintf("${env.%s%s}", envVarName, utils.EnvVarSuffixAPIKey)
 			}
+			// Add custom URL if specified
+			// OpenAI provider uses "url", vLLM provider uses "base_url"
+			if provider.URL != "" {
+				if provider.Type == "openai" {
+					config["url"] = provider.URL
+				} else {
+					config["base_url"] = provider.URL
+				}
+			}
 
 			providerConfig["config"] = configCopy
 

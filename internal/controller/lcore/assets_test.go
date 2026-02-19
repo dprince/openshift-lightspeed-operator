@@ -194,8 +194,8 @@ func TestBuildLlamaStackYAML_OpenAICompatibleProviders(t *testing.T) {
 				t.Fatalf("provider config not found or invalid type")
 			}
 
-			if url, ok := config["url"].(string); !ok || url == "" {
-				t.Errorf("Expected URL to be configured for %s provider", providerType)
+			if url, ok := config["base_url"].(string); !ok || url == "" {
+				t.Errorf("Expected base_url to be configured for %s provider", providerType)
 			}
 
 			t.Logf("Successfully validated '%s' provider uses remote::vllm", providerType)
