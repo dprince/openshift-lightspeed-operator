@@ -123,7 +123,7 @@ fmt: ## Run go fmt against code.
 
 .PHONY: vet
 vet: ## Run go vet against code.
-	go vet -tags=exclude_graphdriver_btrfs ./...
+	go vet -tags=exclude_graphdriver_btrfs,containers_image_openpgp ./...
 
 .PHONY: test
 test: manifests generate fmt vet envtest test-crds ## Run local tests.
